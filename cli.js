@@ -2877,10 +2877,13 @@ async function cmdBuild() {
   if (await exists('.build/app/shared'))
     await run(['cp', '-R', '.build/app/shared', 'dist/shared']);
 
+  // The App Store updates apps itself; a self-updater is grounds for rejection.
+  if (MAS && cfg.update?.url) fail('--mas: remove "update" from tinyjs.json — App Store apps can\'t self-update');
+
   // The .app does NOT use the compiled binary (it can't be codesigned, see
   // below): it ships the stock tjs runtime + the app as plain data files in
   // Resources/, with the launcher as the bundle executable (it spawns tjs).
-  console.log('==> assembling ' + cfg.title + '.app');
+  console.log('==> assembling ' + cfg.title + (MAS ? '.app (Mac App Store variant)' : '.app'));
   const APP = 'dist/' + cfg.title + '.app';
   await tjs.makeDir(APP + '/Contents/MacOS', { recursive: true });
   await tjs.makeDir(APP + '/Contents/Resources', { recursive: true });
@@ -3321,8 +3324,21 @@ async function fetchTxiki(arch) {
   return exe;
 }
 
+// `build --mas`: bundle the Mac App Store variants — launcher-macos-mas and
+// bin/tjs-mas, both compiled with -DTINYJS_MAS (no private API; see
+// launcher-macos.cc and native/patches/libuv-mas-proctitle.patch). They come
+// from a source checkout: `TINYJS_MAS=1 sh setup.sh`. Host arch only for now.
+const MAS = cmd === 'build' && args.includes('--mas');
+async function masBinary(rel) {
+  const p = TOOL_DIR + rel;
+  if (!(await exists(p))) fail(`--mas needs ${rel} — build it with \`TINYJS_MAS=1 sh setup.sh\` in ${TOOL_DIR}`);
+  if (MAC_NEED.length) fail('--mas builds for this Mac only for now — drop --arch / --universal');
+  return p;
+}
+
 // The tjs to bundle for MAC_TARGET.
 async function macTjs() {
+  if (MAS) return masBinary('bin/tjs-mas');
   if (!MAC_NEED.length) return tjs.exePath;
   const have = await macArchsOf(tjs.exePath);
   if (!UNIVERSAL) {
@@ -3349,6 +3365,7 @@ async function macTjs() {
 // a source checkout's is rebuilt with both slices by ensureLauncherFresh()
 // when a build asks for one it lacks.
 async function macLauncher() {
+  if (MAS) return masBinary('native/launcher-macos-mas');
   const src = TOOL_DIR + 'native/launcher-macos';
   if (!MAC_NEED.length) return src;
   const have = await macArchsOf(src);

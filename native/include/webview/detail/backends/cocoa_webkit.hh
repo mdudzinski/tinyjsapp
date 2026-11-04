@@ -454,6 +454,16 @@ private:
     auto preferences = WKWebViewConfiguration_get_preferences(config);
     auto yes_value = NSNumber_numberWithBool(true);
 
+#ifdef TINYJS_MAS
+    // tinyjs Mac App Store build: public API only. elementFullscreenEnabled
+    // is the public (macOS 12.3+) spelling of fullScreenEnabled; devtools and
+    // the DOM clipboard prefs have no public equivalent (tiny.clipboard and
+    // the Edit menu's copy/paste still work).
+    (void)debug;
+    NSObject_setValue_forKey(
+        preferences, yes_value,
+        NSString_stringWithUTF8String("elementFullscreenEnabled"));
+#else
     if (debug) {
       NSObject_setValue_forKey(
           preferences, yes_value,
@@ -463,8 +473,11 @@ private:
     NSObject_setValue_forKey(
         preferences, yes_value,
         NSString_stringWithUTF8String("fullScreenEnabled"));
+#endif
 
-#if defined(__has_builtin)
+#if defined(TINYJS_MAS)
+    // (no DOM clipboard prefs — see above)
+#elif defined(__has_builtin)
 #if __has_builtin(__builtin_available)
     if (__builtin_available(macOS 10.13, *)) {
       NSObject_setValue_forKey(

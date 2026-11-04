@@ -1,6 +1,7 @@
 # vendored/built artifacts — fetched or compiled by setup.sh / setup.ps1
 bin/
 native/launcher-macos
+native/launcher-macos-mas
 native/launcher-win.exe
 native/launcher-linux
 # pre-rename build product; harmless if an old checkout still has it

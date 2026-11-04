@@ -1,0 +1,21 @@
+diff --git a/src/unix/darwin-proctitle.c b/src/unix/darwin-proctitle.c
+index 5e56429..b5c0d26 100644
+--- a/src/unix/darwin-proctitle.c
++++ b/src/unix/darwin-proctitle.c
+@@ -29,12 +29,14 @@
+ 
+ #include <TargetConditionals.h>
+ 
+-#if !TARGET_OS_IPHONE
++/* TINYJS_MAS: the Mac App Store bans the private LaunchServices calls below
++ * (same fix as Electron's MAS build) -- name the thread, as on iOS. */
++#if !TARGET_OS_IPHONE && !defined(TINYJS_MAS)
+ #include "darwin-stub.h"
+ #endif
+ 
+ int uv__set_process_title(const char* title) {
+-#if TARGET_OS_IPHONE
++#if TARGET_OS_IPHONE || defined(TINYJS_MAS)
+   return uv__thread_setname(title);
+ #else
+   CFStringRef (*pCFStringCreateWithCString)(CFAllocatorRef,

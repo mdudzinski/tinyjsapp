@@ -229,6 +229,32 @@ lipo -create $(for ARCH in $ARCHS; do echo "$BUILD_TMP/launcher-$ARCH"; done) -o
 
 codesign --force --sign - native/launcher-macos 2>/dev/null || true
 
+# TINYJS_MAS=1 also builds the Mac App Store variants that `tinyjs build --mas`
+# bundles: native/launcher-macos-mas and bin/tjs-mas, both with -DTINYJS_MAS
+# (every private-API call compiled out — App Review scans the binaries). This
+# Mac's arch only. tjs-mas is txiki.js built from source with
+# native/patches/libuv-mas-proctitle.patch, since the release binary carries
+# libuv's private LaunchServices calls.
+if [ "${TINYJS_MAS:-0}" = "1" ]; then
+  echo "==> compiling Mac App Store launcher (launcher-macos-mas)"
+  c++ -std=c++17 -x objective-c++ -DTINYJS_MAS $MIN_OS -arch "$TJS_ARCH" -isystem native/include \
+    native/launcher-macos.cc -o native/launcher-macos-mas $FW -weak_framework ScreenCaptureKit -ldl
+  codesign --force --sign - native/launcher-macos-mas 2>/dev/null || true
+
+  command -v cmake >/dev/null || { echo "TINYJS_MAS=1 builds txiki.js from source and needs cmake (brew install cmake)" >&2; exit 1; }
+  echo "==> building txiki.js $TJS_VERSION for the Mac App Store (a few minutes)"
+  git clone --depth 1 --branch "$TJS_VERSION" --recurse-submodules --shallow-submodules -j4 \
+    https://github.com/saghul/txiki.js "$TMPD/txiki-mas"
+  git -C "$TMPD/txiki-mas/deps/libuv" apply "$(pwd)/native/patches/libuv-mas-proctitle.patch"
+  GEN="Unix Makefiles"; command -v ninja >/dev/null && GEN=Ninja
+  cmake -S "$TMPD/txiki-mas" -B "$TMPD/txiki-mas/build" -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 -DCMAKE_OSX_ARCHITECTURES="$TJS_ARCH" \
+    -DCMAKE_C_FLAGS=-DTINYJS_MAS -G "$GEN"
+  cmake --build "$TMPD/txiki-mas/build" --target tjs-cli -j"$(sysctl -n hw.ncpu)"
+  cp "$TMPD/txiki-mas/build/tjs" bin/tjs-mas
+  chmod +x bin/tjs-mas
+fi
+
 echo "==> done"
 ./bin/tjs --version
 echo "try:  ./tinyjs new hello && cd hello && ../tinyjs dev"

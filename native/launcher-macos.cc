@@ -1031,8 +1031,14 @@ static NSImage *menu_item_image(const std::string &icon) {
 // meant to be seen. Set by key so the launcher still builds on older SDKs;
 // older systems lack the selector and always showed images anyway.
 static void show_menu_item_image(NSMenuItem *mi) {
+  // TINYJS_MAS: skipped until the SDK declares it (then call it directly) —
+  // a store build mustn't carry names the shipping SDK doesn't know.
+#ifndef TINYJS_MAS
   if ([mi respondsToSelector:NSSelectorFromString(@"setPreferredImageVisibility:")])
     [mi setValue:@1 forKey:@"preferredImageVisibility"];
+#else
+  (void)mi;
+#endif
 }
 
 // Recursively fill `menu` from specs. autoenablesItems=NO so `disabled`
@@ -5203,13 +5209,26 @@ static NSVisualEffectMaterial material_for(const std::string &name) {
   return it == m.end() ? NSVisualEffectMaterialSidebar : it->second;
 }
 
+// Is `v` the frame view's titlebar container? By class name normally; the
+// MAS build may not name private classes, so it reaches the same view through
+// public API instead: close button -> NSTitlebarView -> container.
+static bool is_titlebar_container(NSWindow *win, NSView *v) {
+#ifdef TINYJS_MAS
+  NSView *bar = [win standardWindowButton:NSWindowCloseButton].superview;
+  return bar && v == bar.superview;
+#else
+  (void)win;
+  return [v isKindOfClass:NSClassFromString(@"NSTitlebarContainerView")];
+#endif
+}
+
 // The hidden titlebar's NSTitlebarContainerView still occupies (and drags
 // from) the top strip; hide it entirely when frameless with no traffic
 // lights so the page owns every pixel and every mouse event.
 static void set_titlebar_hidden(NSWindow *win, bool hidden) {
   NSView *frameView = win.contentView.superview;
   for (NSView *v in frameView.subviews) {
-    if ([v isKindOfClass:NSClassFromString(@"NSTitlebarContainerView")])
+    if (is_titlebar_container(win, v))
       v.hidden = hidden;
   }
 }
@@ -5222,7 +5241,7 @@ static void relayout_titlebar(NSWindow *win) {
   CGFloat H = frameView.bounds.size.height;
   CGFloat W = frameView.bounds.size.width;
   for (NSView *v in frameView.subviews) {
-    if ([v isKindOfClass:NSClassFromString(@"NSTitlebarContainerView")]) {
+    if (is_titlebar_container(win, v)) {
       CGFloat h = v.frame.size.height > 0 ? v.frame.size.height : 28;
       v.frame = NSMakeRect(0, H - h, W, h);
       [v setNeedsLayout:YES];
@@ -5325,10 +5344,17 @@ static void extend_content(WKWebView *wv, NSWindow *win,
 static void webview_draws_background(WKWebView *wv, bool draws) {
   // Private-but-stable WKWebView property, reached via KVC's _drawsBackground
   // fallback (same trick the webview library uses for WKPreferences).
+  // TINYJS_MAS: no public equivalent, so transparent/vibrancy pages stay
+  // opaque in a store build.
+#ifndef TINYJS_MAS
   @try {
     [wv setValue:@(draws) forKey:@"drawsBackground"];
   } @catch (NSException *) {
   }
+#else
+  (void)wv;
+  (void)draws;
+#endif
 }
 
 static NSWindow *window_for_id(webview_t w, const std::string &id);
@@ -6995,10 +7021,12 @@ static std::string winid_for_nswindow(NSWindow *win) {
 // own window via the private _WKInspector (show, then detach — a no-op when
 // already windowed). Private API by KVC/performSelector so nothing breaks at
 // compile or load if it moves; the inspector UI's own detach button is the
-// manual fallback.
+// manual fallback. TINYJS_MAS: a no-op (private), and "debug" is ignored
+// there anyway — inspect a MAS build from Safari's Develop menu instead.
 static void open_inspector(WKWebView *wv) {
   if (!wv)
     return;
+#ifndef TINYJS_MAS
   @try {
     id insp = [wv valueForKey:@"_inspector"];
     if ([insp respondsToSelector:@selector(show)])
@@ -7007,6 +7035,7 @@ static void open_inspector(WKWebView *wv) {
       [insp performSelector:@selector(detach)];
   } @catch (NSException *) {
   }
+#endif
 }
 
 static void open_inspector_for_key_window() {
@@ -7458,8 +7487,10 @@ static void do_winopen(webview_t w, void *arg) {
     apply_webview_prefs(cfg);
     // Main gets this from webview_create(debug); secondaries build their own
     // config, so without it child windows were never inspectable.
+#ifndef TINYJS_MAS
     if (g_debug)
       [cfg.preferences setValue:@YES forKey:@"developerExtrasEnabled"];
+#endif
     TinyWindow &tw = g_windows[req->id]; // create slot first (attach parks handler)
     attach_tiny_bridge(cfg.userContentController, req->id);
 
@@ -9116,8 +9147,13 @@ static void do_ai(webview_t, void *arg) {
 // Preference changes propagate to the web process, so they must be applied
 // before any content loads. Every one is a harmless no-op on OS versions where
 // its flag or private API doesn't exist.
+//
+// TINYJS_MAS (the Mac App Store launcher, launcher-macos-mas) compiles all
+// three out: App Review scans binaries for private selectors and keys, so
+// the names must not even be in __cstring. The cost: no WebGPU flag, and
+// crossorigin module scripts (Vite builds) can't load over file://.
 
-#ifdef __APPLE__
+#if defined(__APPLE__) && !defined(TINYJS_MAS)
 static void enable_webgpu_prefs(id preferences) {
   WKPreferences *prefs = (WKPreferences *)preferences;
   if (!prefs)
@@ -9189,6 +9225,8 @@ static void apply_webview_prefs(WKWebViewConfiguration *cfg) {
   if (!g_bundle_mode)
     expose_media_devices(cfg.preferences);
 }
+#elif defined(__APPLE__)
+static void apply_webview_prefs(WKWebViewConfiguration *) {}
 #endif
 
 // -----------------------------------------------------------------------------
@@ -10405,10 +10443,16 @@ int main(int argc, char *argv[]) {
     NSString *s = dbg && *dbg ? [NSString stringWithUTF8String:dbg] : nil;
     if (!s)
       s = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"TinyjsDebug"];
+#ifdef TINYJS_MAS
+    // No devtools in a store build: they rest on private WebKit API.
+    if (s.length)
+      std::fprintf(stderr, "launcher: \"debug\" is ignored in the MAS build\n");
+#else
     if (s.length) {
       g_debug = true;
       g_debug_open = [s isEqualToString:@"open"];
     }
+#endif
   }
   // tinyjs.json "inject": document-start user JS in every window. Dev carries
   // the source inline in the env; packaged apps ship it as Resources/app/

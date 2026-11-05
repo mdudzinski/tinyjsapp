@@ -6615,8 +6615,10 @@ static void apply_square(NSWindow *win, bool square) {
                                                    keep_content.height)].size;
   f.origin.y = top - f.size.height;
   [win setFrame:f display:YES];
-  if (square)
-    [win makeKeyAndOrderFront:nil]; // re-key after the styleMask swap
+  // Re-key after the styleMask swap — only if it was already on screen, or an
+  // accessory app's hidden-at-launch window pops up.
+  if (square && win.visible)
+    [win makeKeyAndOrderFront:nil];
 }
 
 // The chrome-application core, factored out so do_winopen can apply chrome
